@@ -1,4 +1,4 @@
-# Aetheris Spec Book (Roadmap 1–6) — V1
+# Aetheris Spec Book V1
 
 > **Aetheris** is an EVM-compatible L1 designed as a **compact DeFi processor**:  
 > - **0x7E BitPackedTx** for high-throughput atomic batches  
