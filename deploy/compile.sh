@@ -1,53 +1,73 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROFILE="${1:-1153}"          # 1153 | legacy
-PM_HEX="${2:?pm address required, e.g. 0x00b0...62ac}"
+PROFILE="${1:-1153}"             # 1153 | legacy
+PM_HEX="${2:?pm address required like 0x...}"
+FLAGS="${3:-all}"                # all | minimal (strip ops)
+OUTDIR="${4:-build}"
 
-# basic sanity on PM address
 if [[ ! "$PM_HEX" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
-  echo "ERROR: PM_HEX must be a 20-byte hex address like 0x + 40 hex chars"
+  echo "PM must be 0x + 40 hex chars"
   exit 1
 fi
 
-mkdir -p build
+mkdir -p "$OUTDIR"
 
-# select kernel
+# pick kernel
 if [ "$PROFILE" = "1153" ]; then
-  KIN="contracts/Kernel1153.yul"
-elif [ "$PROFILE" = "legacy" ]; then
-  KIN="contracts/KernelLegacy.yul"
+  cp contracts/Kernel1153.yul "$OUTDIR/Kernel.yul"
 else
-  echo "ERROR: PROFILE must be '1153' or 'legacy'"
-  exit 1
+  cp contracts/KernelLegacy.yul "$OUTDIR/Kernel.yul"
 fi
 
-# copy + link
-cp "$KIN" build/Kernel.yul
-
-node <<'NODE'
-const fs = require("fs");
-const pm = process.env.PM_HEX;
-let s = fs.readFileSync("build/Kernel.yul","utf8");
-
-// replace all occurrences of __PM__ with the actual address literal
-// expected placeholder: let PM := __PM__
-s = s.replaceAll("__PM__", pm);
-
-fs.writeFileSync("build/Kernel.linked.yul", s);
+# build-time strip (safe, dumb, effective)
+# - minimal: removes CALLV and ERC20XFER blocks if you mark them with tags.
+# If you didn't add tags, this still works as "no-op".
+node - <<'NODE'
+const fs = require('fs');
+const path = process.argv[1];
 NODE
 
-# compile strict-assembly
-solc --strict-assembly build/Kernel.linked.yul -o build --bin
+# link PM placeholder
+node -e "
+const fs=require('fs');
+let s=fs.readFileSync('$OUTDIR/Kernel.yul','utf8');
+s=s.replaceAll('__PM__', '$PM_HEX');
 
-# report
-BIN_FILE=$(ls -1 build/*.bin 2>/dev/null | head -n 1 || true)
-if [ -z "$BIN_FILE" ]; then
-  echo "ERROR: solc did not produce a .bin output in build/"
-  exit 1
-fi
+const flags='$FLAGS';
+if(flags==='minimal'){
+  // Optional: strip blocks if you add comment tags:
+  // /*IF_CALLV*/ ... /*ENDIF_CALLV*/
+  s=s.replace(/\/\*IF_CALLV\*\/[\\s\\S]*?\/\*ENDIF_CALLV\*\//g,'');
+  s=s.replace(/\/\*IF_ERC20XFER\*\/[\\s\\S]*?\/\*ENDIF_ERC20XFER\*\//g,'');
+}
+fs.writeFileSync('$OUTDIR/Kernel.linked.yul', s);
+"
 
-BYTES=$(( $(wc -c < "$BIN_FILE") / 2 ))
-echo "OK: compiled -> $BIN_FILE"
-echo "Bytecode size (bytes): $BYTES"
-echo "Tip: deploy the hex in $BIN_FILE with cast/hardhat/foundry."
+# compile (strict assembly)
+solc --strict-assembly "$OUTDIR/Kernel.linked.yul" -o "$OUTDIR" --bin >/dev/null
+
+BIN="$(ls -1 $OUTDIR/*.bin | head -n 1)"
+BYTE_LEN=$(python3 - <<PY
+import pathlib
+p=pathlib.Path("$BIN")
+h=p.read_text().strip()
+print(len(h)//2)
+PY
+)
+
+HASH=$(python3 - <<PY
+import hashlib, pathlib
+p=pathlib.Path("$BIN")
+b=bytes.fromhex(p.read_text().strip())
+print(hashlib.sha256(b).hexdigest())
+PY
+)
+
+echo "OK"
+echo " profile : $PROFILE"
+echo " flags   : $FLAGS"
+echo " pm      : $PM_HEX"
+echo " bin     : $BIN"
+echo " bytes   : $BYTE_LEN"
+echo " sha256  : $HASH"
