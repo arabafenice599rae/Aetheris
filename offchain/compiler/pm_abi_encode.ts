@@ -27,8 +27,8 @@ export function encodeClear(currency: `0x${string}`, amount: bigint): `0x${strin
 
 export type SwapParams = {
   zeroForOne: boolean;
-  amountSpecified: bigint;     // int256
-  sqrtPriceLimitX96: bigint;   // uint160
+  amountSpecified: bigint;
+  sqrtPriceLimitX96: bigint;
 };
 
 export function encodeSwap(
