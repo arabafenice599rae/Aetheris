@@ -22,7 +22,6 @@ async function main() {
   const bindTag = BigInt("0x" + crypto.randomUUID().replaceAll("-", "").slice(0, 16));
   const authBytes = hexToBytes(AUTH);
 
-  // Example route (fill with real pool keys)
   const poolA: PoolKey = {
     currency0: mustEnv("A_C0") as `0x${string}`,
     currency1: mustEnv("A_C1") as `0x${string}`,
@@ -42,39 +41,20 @@ async function main() {
   const recipient = mustEnv("RECIPIENT") as `0x${string}`;
   const takeTo = mustEnv("TAKETO") as `0x${string}`;
 
-  // Mock deltas: (your sim must output real deltas!)
-  // Example: end with +profit in USDT, nothing else
-  const profitCurrency = mustEnv("PROFIT_CCY") as `0x${string}`;
-  const profitToken = mustEnv("PROFIT_TOKEN") as `0x${string}`;
-  const profitAmt = BigInt(mustEnv("PROFIT_AMT"));
+  // MOCK deltas: sostituisci con output del tuo sim
+  const PROFIT_CCY = mustEnv("PROFIT_CCY") as `0x${string}`;
+  const PROFIT_TOKEN = mustEnv("PROFIT_TOKEN") as `0x${string}`;
+  const PROFIT_AMT = BigInt(mustEnv("PROFIT_AMT"));
 
   const { stateHint64, ops } = await buildSTR_MPN({
     rpcUrl: RPC_URL,
     stateView: STATE_VIEW,
     plan: {
       hops: [
-        {
-          poolKey: poolA,
-          params: {
-            zeroForOne: true,
-            amountSpecified: BigInt(mustEnv("AMT_SPEC_1")),     // int256
-            sqrtPriceLimitX96: BigInt(mustEnv("SPL_1")),        // uint160
-          },
-          hookData: "0x",
-        },
-        {
-          poolKey: poolB,
-          params: {
-            zeroForOne: false,
-            amountSpecified: BigInt(mustEnv("AMT_SPEC_2")),
-            sqrtPriceLimitX96: BigInt(mustEnv("SPL_2")),
-          },
-          hookData: "0x",
-        }
+        { poolKey: poolA, params: { zeroForOne: true,  amountSpecified: BigInt(mustEnv("AMT_SPEC_1")), sqrtPriceLimitX96: BigInt(mustEnv("SPL_1")) }, hookData: "0x" },
+        { poolKey: poolB, params: { zeroForOne: false, amountSpecified: BigInt(mustEnv("AMT_SPEC_2")), sqrtPriceLimitX96: BigInt(mustEnv("SPL_2")) }, hookData: "0x" },
       ],
-      deltas: [
-        { currency: profitCurrency, amount: profitAmt, token: profitToken, isNative: false },
-      ],
+      deltas: [{ currency: PROFIT_CCY, amount: PROFIT_AMT, token: PROFIT_TOKEN, isNative: false }],
       recipient,
       takeTo,
     }
