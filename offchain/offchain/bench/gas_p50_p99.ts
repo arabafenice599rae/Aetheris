@@ -1,4 +1,6 @@
+// offchain/bench/gas_p50_p99.ts
 import { createPublicClient, http } from "viem";
+import fs from "fs";
 
 function mustEnv(k: string): string {
   const v = process.env[k];
@@ -9,12 +11,10 @@ function mustEnv(k: string): string {
 async function main() {
   const RPC_URL = mustEnv("RPC_URL");
   const FROM = mustEnv("FROM") as `0x${string}`;
-  const TO = mustEnv("TO") as `0x${string}`;           // Kernel address
-  const DATA_FILE = mustEnv("DATA_FILE");              // newline-separated 0x... payloads
+  const TO = mustEnv("TO") as `0x${string}`;
+  const DATA_FILE = mustEnv("DATA_FILE");
 
-  const fs = await import("fs");
   const payloads = fs.readFileSync(DATA_FILE, "utf8").trim().split("\n").filter(Boolean);
-
   const client = createPublicClient({ transport: http(RPC_URL) });
 
   const gasList: bigint[] = [];
@@ -22,8 +22,8 @@ async function main() {
     const g = await client.estimateGas({ account: FROM, to: TO, data: data as `0x${string}` });
     gasList.push(g);
   }
-
   gasList.sort((a, b) => (a < b ? -1 : 1));
+
   const p50 = gasList[Math.floor(gasList.length * 0.50)];
   const p99 = gasList[Math.floor(gasList.length * 0.99)];
 
