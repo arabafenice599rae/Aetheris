@@ -11,7 +11,7 @@ object "KernelLegacy" {
       let SEL_UCALL  := 0x91dd7346
       let SEL_ERC20_TRANSFER := 0xa9059cbb
 
-      // storage slots
+      // storage slots (cross-tx, slower, universal)
       let SS_BIND := 0
       let SS_AUTH := 1
       let SS_HINT := 2
@@ -89,9 +89,7 @@ object "KernelLegacy" {
           let payload := add(p, 4)
 
           switch op
-          case 0x01 {
-            if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() }
-          }
+          case 0x01 { if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() } }
           case 0x02 {
             if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() }
             sset(SS_MIRR, add(sget(SS_MIRR), 1))
@@ -102,9 +100,9 @@ object "KernelLegacy" {
             if iszero(m) { fail() }
             sset(SS_MIRR, sub(m, 1))
           }
-          case 0x04 {
-            if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() }
-          }
+          case 0x04 { if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() } }
+
+          /*IF_CALLV*/
           case 0x05 {
             if lt(len, 32) { fail() }
             let v := calldataload(payload)
@@ -112,6 +110,9 @@ object "KernelLegacy" {
             let cdLen := sub(len, 32)
             if iszero(call(gas(), PM, v, cdPtr, cdLen, 0, 0)) { fail() }
           }
+          /*ENDIF_CALLV*/
+
+          /*IF_ERC20XFER*/
           case 0x06 {
             if iszero(eq(len, 52)) { fail() }
             let tokenWord := calldataload(payload)
@@ -124,6 +125,8 @@ object "KernelLegacy" {
             mstore(add(m, 36), amt)
             if iszero(call(gas(), token, 0, m, 68, 0, 0)) { fail() }
           }
+          /*ENDIF_ERC20XFER*/
+
           default { fail() }
 
           p := next
