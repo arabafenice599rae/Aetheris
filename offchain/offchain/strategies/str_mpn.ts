@@ -5,15 +5,14 @@ import { buildAutoCloseOps, ClosePlan, Delta } from "./auto_closer";
 
 export type Hop = {
   poolKey: PoolKey;
-  poolId?: `0x${string}`; // optional if precomputed
+  poolId?: `0x${string}`;
   params: SwapParams;
   hookData?: `0x${string}`;
 };
 
 export type MPNPlan = {
   hops: Hop[];
-  // final deltas predicted by your sim
-  deltas: Delta[];
+  deltas: Delta[];              // from your sim
   recipient: `0x${string}`;
   takeTo: `0x${string}`;
 };
@@ -23,20 +22,16 @@ export async function buildSTR_MPN(args: {
   stateView: `0x${string}`;
   plan: MPNPlan;
 }): Promise<{ stateHint64: bigint; ops: Uint8Array[]; poolIds: `0x${string}`[] }> {
-  // 1) Route hint over all pools in hops
   const poolKeys = args.plan.hops.map((h) => h.poolKey);
   const { poolIds, routeHint64 } = await computeRouteHint64({ rpcUrl: args.rpcUrl, stateView: args.stateView, poolKeys });
 
-  // 2) Economic ops: swaps (multi-hop netting)
   const econOps: Uint8Array[] = [];
   for (let i = 0; i < args.plan.hops.length; i++) {
     const hop = args.plan.hops[i];
     const poolId = (hop.poolId ?? poolIds[i]) as `0x${string}`;
-    const cd = encodeSwap(poolId, hop.params, hop.hookData ?? "0x");
-    econOps.push(opCall(cd));
+    econOps.push(opCall(encodeSwap(poolId, hop.params, hop.hookData ?? "0x")));
   }
 
-  // 3) Auto-closer: settle/take discipline based on predicted deltas
   const closePlan: ClosePlan = {
     recipient: args.plan.recipient,
     takeTo: args.plan.takeTo,
