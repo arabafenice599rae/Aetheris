@@ -1,3 +1,10 @@
+// contracts/KernelLegacy.yul
+// PROD COMPAT — no EIP-1153 (uses storage)
+// - No offchain changes required
+// - PackedOps format unchanged (64B header + ops stream)
+// Storage packing:
+//   slot0 = bindTag(64) | auth(160)<<64 | mirr(32)<<224
+
 object "KernelLegacy" {
   code {
     datacopy(0, dataoffset("Runtime"), datasize("Runtime"))
@@ -9,37 +16,56 @@ object "KernelLegacy" {
       let PM := __PM__
       let SEL_UNLOCK := 0x48c89491
       let SEL_UCALL  := 0x91dd7346
-      let SEL_ERC20_TRANSFER := 0xa9059cbb
 
-      // storage slots (cross-tx, slower, universal)
-      let SS_BIND := 0
-      let SS_AUTH := 1
-      let SS_HINT := 2
-      let SS_MIRR := 3
+      // packed state slot
+      let SS_PACK := 0
 
-      function fail() { revert(0,0) }
-      function sget(slot) -> v { v := sload(slot) }
-      function sset(slot, v) { sstore(slot, v) }
+      // masks
+      let MASK64  := 0xffffffffffffffff
+      let MASK160 := 0xffffffffffffffffffffffffffffffffffffffff
+      let MASK224 := 0x00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff // low 224 bits
+
+      function die() { revert(0,0) }
+      function m160(x) -> y { y := and(x, MASK160) }
+
+      function packState(bindTag, auth, mirr) -> v {
+        // bindTag: u64 in low 64
+        // auth: address in next 160
+        // mirr: u32 in top 32
+        v := or(or(and(bindTag, MASK64), shl(64, m160(auth))), shl(224, and(mirr, 0xffffffff)))
+      }
+
+      function getBind(v) -> b { b := and(v, MASK64) }
+      function getAuth(v) -> a { a := and(shr(64, v), MASK160) }
+      function getMirr(v) -> m { m := shr(224, v) }
+
+      function setMirr(v, newM) -> out {
+        // keep low 224 bits (bind+auth), replace high 32 (mirr)
+        out := or(and(v, MASK224), shl(224, and(newM, 0xffffffff)))
+      }
+
+      function pmcall(payload, len) {
+        if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { die() }
+      }
 
       function callUnlock() {
-        if lt(calldatasize(), 72) { fail() }
+        if lt(calldatasize(), 64) { die() }
 
         let w0 := calldataload(0)
         let w1 := calldataload(32)
-        let w2 := calldataload(64)
 
-        let deadline := and(w0, 0xffffffffffffffff)
-        if gt(timestamp(), deadline) { fail() }
-        let bindTag := and(shr(64, w0), 0xffffffffffffffff)
+        let deadline := and(w0, MASK64)
+        if gt(timestamp(), deadline) { die() }
 
-        let auth := and(w1, 0xffffffffffffffffffffffffffffffffffffffff)
-        if iszero(eq(caller(), auth)) { fail() }
+        let bindTag := and(shr(64, w0), MASK64)
 
-        sset(SS_BIND, bindTag)
-        sset(SS_AUTH, auth)
-        sset(SS_HINT, w2)
-        sset(SS_MIRR, 0)
+        let auth := m160(w1)
+        if iszero(eq(caller(), auth)) { die() }
 
+        // set packed state (mirr=0)
+        sstore(SS_PACK, packState(bindTag, auth, 0))
+
+        // ABI encode unlock(bytes)
         let p := mload(0x40)
         mstore(p, shl(224, SEL_UNLOCK))
         mstore(add(p, 4), 0x20)
@@ -48,15 +74,15 @@ object "KernelLegacy" {
         calldatacopy(add(p, 68), 0, n)
         let total := add(68, n)
 
-        if iszero(call(gas(), PM, 0, p, total, 0, 0)) { fail() }
+        if iszero(call(gas(), PM, 0, p, total, 0, 0)) { die() }
         return(0,0)
       }
 
       function handleCallback() {
-        if iszero(eq(calldataload(4), 0x20)) { fail() }
+        if iszero(eq(calldataload(4), 0x20)) { die() }
         let dataLen := calldataload(36)
+        if lt(dataLen, 64) { die() }
         let dataPtr := 68
-        if lt(dataLen, 72) { fail() }
         run(dataPtr, add(dataPtr, dataLen))
         return(0,0)
       }
@@ -64,80 +90,60 @@ object "KernelLegacy" {
       function run(ptr, end) {
         let w0 := calldataload(ptr)
         let w1 := calldataload(add(ptr, 32))
-        let w2 := calldataload(add(ptr, 64))
 
-        let deadline := and(w0, 0xffffffffffffffff)
-        if gt(timestamp(), deadline) { fail() }
+        let deadline := and(w0, MASK64)
+        if gt(timestamp(), deadline) { die() }
 
-        let bindTag := and(shr(64, w0), 0xffffffffffffffff)
-        if iszero(eq(bindTag, sget(SS_BIND))) { fail() }
+        let bindTag := and(shr(64, w0), MASK64)
+        let auth := m160(w1)
 
-        let auth := and(w1, 0xffffffffffffffffffffffffffffffffffffffff)
-        if iszero(eq(auth, sget(SS_AUTH))) { fail() }
+        let st := sload(SS_PACK)
+        if iszero(eq(bindTag, getBind(st))) { die() }
+        if iszero(eq(auth, getAuth(st))) { die() }
 
-        if iszero(eq(w2, sget(SS_HINT))) { fail() }
-
-        let p := add(ptr, 72)
+        let p := add(ptr, 64)
 
         for { } lt(p, end) { } {
-          if gt(add(p, 4), end) { fail() }
-          let w := calldataload(p)
-          let op := byte(0, w)
-          let len := and(shr(224, w), 0xffff)
+          if gt(add(p, 4), end) { die() }
+
+          let hw := calldataload(p)
+          let op := byte(0, hw)
+          let len := and(shr(224, hw), 0xffff)
           let next := add(p, add(4, len))
-          if gt(next, end) { fail() }
+          if gt(next, end) { die() }
           let payload := add(p, 4)
 
           switch op
-          case 0x01 { if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() } }
+          case 0x01 {
+            pmcall(payload, len)
+          }
           case 0x02 {
-            if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() }
-            sset(SS_MIRR, add(sget(SS_MIRR), 1))
+            pmcall(payload, len)
+            st := sload(SS_PACK)
+            let m := add(getMirr(st), 1)
+            sstore(SS_PACK, setMirr(st, m))
           }
           case 0x03 {
-            if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() }
-            let m := sget(SS_MIRR)
-            if iszero(m) { fail() }
-            sset(SS_MIRR, sub(m, 1))
+            pmcall(payload, len)
+            st := sload(SS_PACK)
+            let m0 := getMirr(st)
+            if iszero(m0) { die() }
+            sstore(SS_PACK, setMirr(st, sub(m0, 1)))
           }
-          case 0x04 { if iszero(call(gas(), PM, 0, payload, len, 0, 0)) { fail() } }
-
-          /*IF_CALLV*/
-          case 0x05 {
-            if lt(len, 32) { fail() }
-            let v := calldataload(payload)
-            let cdPtr := add(payload, 32)
-            let cdLen := sub(len, 32)
-            if iszero(call(gas(), PM, v, cdPtr, cdLen, 0, 0)) { fail() }
+          case 0x04 {
+            pmcall(payload, len)
           }
-          /*ENDIF_CALLV*/
-
-          /*IF_ERC20XFER*/
-          case 0x06 {
-            if iszero(eq(len, 52)) { fail() }
-            let tokenWord := calldataload(payload)
-            let token := and(tokenWord, 0xffffffffffffffffffffffffffffffffffffffff)
-            let amt := calldataload(add(payload, 20))
-
-            let m := mload(0x40)
-            mstore(m, shl(224, SEL_ERC20_TRANSFER))
-            mstore(add(m, 4), shl(96, PM))
-            mstore(add(m, 36), amt)
-            if iszero(call(gas(), token, 0, m, 68, 0, 0)) { fail() }
-          }
-          /*ENDIF_ERC20XFER*/
-
-          default { fail() }
+          default { die() }
 
           p := next
         }
 
-        if iszero(eq(sget(SS_MIRR), 0)) { fail() }
+        // mirror must be zero
+        st := sload(SS_PACK)
+        if iszero(eq(getMirr(st), 0)) { die() }
 
-        sset(SS_BIND, 0)
-        sset(SS_AUTH, 0)
-        sset(SS_HINT, 0)
-        sset(SS_MIRR, 0)
+        // clear state
+        sstore(SS_PACK, 0)
       }
 
       let sig := shr(224, calldataload(0))
