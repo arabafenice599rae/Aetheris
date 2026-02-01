@@ -1,0 +1,1 @@
+console.log('PROMAX Version');
