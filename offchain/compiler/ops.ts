@@ -10,11 +10,9 @@ export function op(opcode: number, flags: number, payload: Uint8Array): Uint8Arr
   return out;
 }
 
-export const OP_CALL = 0x01;
-export const OP_TAKE = 0x02;
-export const OP_CLEAR = 0x03;
-export const OP_SETTLE = 0x04;
-
-// PROMAX additions:
-export const OP_ERC20XFER = 0x05; // payload: token(20) + amount(32)
-export const OP_CALLV = 0x06;     // payload: value(32) + calldata(...)
+export const OP_CALL       = 0x01;
+export const OP_TAKE       = 0x02;
+export const OP_CLEAR      = 0x03;
+export const OP_SETTLE     = 0x04;
+export const OP_CALLV      = 0x05; // payload = value(32) || calldata
+export const OP_ERC20XFER  = 0x06; // payload = token(20) || amount(32)
